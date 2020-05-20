@@ -4,6 +4,10 @@ import torch.nn.functional as F
 import torchfile
 import cv2 as cv
 import numpy as np
+import os
+# import tqdm
+from os import listdir
+from os.path import isfile, join, isdir
 
 
 class VGG(nn.Module):
@@ -72,17 +76,6 @@ class VGG(nn.Module):
         x8 = F.dropout(x7, 0.5, self.training)
         return(x7, self.FC8(x8))
 
-    # num_flat_features() could do the flattening, but not necessary.
-    '''
-    def num_flat_features(self, x): # so maybe it is flatten() in keras
-        size = x.size()[1:]  # all dimensions except the batch dimension
-        num_features = 1
-        for s in size:
-            num_features *= s
-        return num_features
-    '''
-
-
     def load_weights(self, path="/home/hyobin/Documents/SoSe20/SHK/vgg_face_torch/VGG_FACE.t7"):
         """ Function to load luatorch pretrained
         Args:
@@ -106,17 +99,62 @@ class VGG(nn.Module):
                     block += 1
                     self_layer.weight.data[...] = torch.tensor(layer.weight).view_as(self_layer.weight)[...]
                     self_layer.bias.data[...] = torch.tensor(layer.bias).view_as(self_layer.bias)[...]
+    
+def classifier_train():
+
+    model = VGG()
+    model.load_weights()
+    mypath = "/home/hyobin/Documents/vgg-face.pytorch/images/Train"
+    people = np.sort(listdir(mypath)) # additional sort() needed.
+    
+    labels = torch.zeros(25*len(people), dtype = int)
+    
+    for i in range(len(people)):
+        descriptors = torch.zeros([25, 4096])
+        print(i)
+        img_path = mypath + "/" + people[i]
+        labels[25*i:25*(i+1)] = i+1
+
+        # img_names = [img_path + s for s in listdir(img_path)]
+        # np.apply_along_axis(cv.imread, 1, img_names)
+        img_names = listdir(img_path)
+        for k in range(25): # 25 images per person
+            img_name = img_names[k]
+            img = cv.imread(img_path + "/" + img_name)
+            img = cv.resize(img, (224, 224))
+            img = torch.Tensor(img).permute(2, 0, 1).view(1, 3, 224, 224)
+            model.eval()
+            img -= torch.Tensor(np.array([129.1863, 104.7624, 93.5940])).view(1, 3, 1, 1)
+            descriptor = model(img)[0]
+            descriptors[k, :] = descriptor
+        
+        torch.save(descriptors, 'descriptors{}.pt'.format(i))
+    torch.save(labels, 'descriptors.pt')
+        
 
 if __name__ == "__main__":
+    classifier_train()
+    
+
+    '''   
     model = VGG().double()
     model.load_weights()
+    mypath = "/home/hyobin/Documents/vgg-face.pytorch/images/Train"
+    print(isdir(mypath))
+    print(listdir(mypath))
+    print(listdir(mypath + "/" + listdir(mypath)[0]))
 
-    im = cv.imread("/home/hyobin/Documents/SoSe20/SHK/vgg_face_torch/ak.png")
+    
+    im = cv.imread("/home/hyobin/Documents/vgg-face.pytorch/images/Train/20_Hyovin/00020_030320201123.png")
+    im = cv.resize(im, (224, 224))
     # change the dimension format from opencv to torch
     im = torch.Tensor(im).permute(2, 0, 1).view(1, 3, 224, 224).double()
     
     model.eval()
     im -= torch.Tensor(np.array([129.1863, 104.7624, 93.5940])).double().view(1, 3, 1, 1)
-    preds = F.softmax(model(im), dim=1)
+    print(model(im)[0].size())
+    print(model(im)[0].max())
+    preds = F.softmax(model(im)[1], dim=1)
     values, indices = preds.max(-1)
     print("values: ", values, "indices: ", indices)
+    '''
