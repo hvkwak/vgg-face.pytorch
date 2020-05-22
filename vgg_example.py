@@ -100,25 +100,30 @@ class VGG(nn.Module):
                     self_layer.weight.data[...] = torch.tensor(layer.weight).view_as(self_layer.weight)[...]
                     self_layer.bias.data[...] = torch.tensor(layer.bias).view_as(self_layer.bias)[...]
     
-def classifier_train():
-
+def compute_descriptors(phase): # computes descriptors of Train/Test dataset
+    # phase: 'Train' or 'Test'
     model = VGG()
     model.load_weights()
-    mypath = "/home/hyobin/Documents/vgg-face.pytorch/images/Train"
+
+    mypath = "/home/hyobin/Documents/vgg-face.pytorch/images/"+phase
     people = np.sort(listdir(mypath)) # additional sort() needed.
+
+    # number of images and memory for labels
+    num_imgs = 0
+    for k in range(len(people)):
+        num_imgs = num_imgs + len(listdir(mypath + "/" + people[k]))
+    labels = torch.zeros(num_imgs, dtype = int)
     
-    labels = torch.zeros(25*len(people), dtype = int)
-    
+    # compute descriptors per person:
     for i in range(len(people)):
-        descriptors = torch.zeros([25, 4096])
         print(i)
         img_path = mypath + "/" + people[i]
-        labels[25*i:25*(i+1)] = i+1
+        n = len(listdir(img_path))
+        descriptors = torch.zeros([n, 4096])
+        labels[n*i:n*(i+1)] = i+1
 
-        # img_names = [img_path + s for s in listdir(img_path)]
-        # np.apply_along_axis(cv.imread, 1, img_names)
         img_names = listdir(img_path)
-        for k in range(25): # 25 images per person
+        for k in range(n): # n images per person
             img_name = img_names[k]
             img = cv.imread(img_path + "/" + img_name)
             img = cv.resize(img, (224, 224))
@@ -128,33 +133,71 @@ def classifier_train():
             descriptor = model(img)[0]
             descriptors[k, :] = descriptor
         
-        torch.save(descriptors, 'descriptors{}.pt'.format(i))
-    torch.save(labels, 'descriptors.pt')
-        
+        torch.save(descriptors, phase + '_descriptors{}.pt'.format(i))
+    torch.save(labels, phase + '_labels.pt')
+
+def classifier(test_img):
+    mypath = "/home/hyobin/Documents/vgg-face.pytorch/descriptors/descriptors/"
+    n = len(listdir(mypath))
+
+    # Startwert: Infinity
+    best_distance = np.Inf
+    best_label = n+1
+    
+    # per class compute the best Nearest Neighbor(NN)
+    for i in range(n): 
+        descriptor = torch.load(mypath+"Train_descriptors{}.pt".format(i))
+        # compute Euclidean Distance:
+        NN = torch.min(torch.sum((descriptor - test_img)**2, 1)) # row sums
+        if NN < best_distance:
+            best_distance = NN
+            best_label = i
+    return(best_distance, best_label)
+
+def einzel_test(img_name):
+    model = VGG()
+    model.load_weights()
+    img = cv.imread(img_name)
+    img = cv.resize(img, (224, 224))
+    img = torch.Tensor(img).permute(2, 0, 1).view(1, 3, 224, 224)
+    model.eval()
+    img -= torch.Tensor(np.array([129.1863, 104.7624, 93.5940])).view(1, 3, 1, 1)
+    test_img = model(img)[0]
+    __, NN_label = classifier(test_img)
+    # fuer Einzeltest muss es um 1 erhoeht werden
+    print(NN_label+1) 
+
+def test():
+    model = VGG()
+    model.load_weights()
+    testpath = "/home/hyobin/Documents/vgg-face.pytorch/images/"+"Test"
+    people = np.sort(listdir(testpath)) # additional sort() needed.
+    result_mat = torch.zeros((len(people), len(people)), dtype=int)
+
+    # compute descriptors per person:
+    for i in range(len(people)): # Here comes the label.
+        print(i)
+        img_path = testpath + "/" + people[i]
+        img_names = listdir(img_path)
+        n = len(img_names)
+        for k in range(n): # n images per person
+            img_name = img_names[k]
+            img = cv.imread(img_path + "/" + img_name)
+            img = cv.resize(img, (224, 224))
+            img = torch.Tensor(img).permute(2, 0, 1).view(1, 3, 224, 224)
+            model.eval()
+            img -= torch.Tensor(np.array([129.1863, 104.7624, 93.5940])).view(1, 3, 1, 1)
+            test_img = model(img)[0]
+            __, NN_label = classifier(test_img)
+            result_mat[i, NN_label] = result_mat[i, NN_label] + 1
+        print(result_mat)
+    return(result_mat)
 
 if __name__ == "__main__":
-    classifier_train()
-    
-
-    '''   
-    model = VGG().double()
-    model.load_weights()
-    mypath = "/home/hyobin/Documents/vgg-face.pytorch/images/Train"
-    print(isdir(mypath))
-    print(listdir(mypath))
-    print(listdir(mypath + "/" + listdir(mypath)[0]))
-
-    
-    im = cv.imread("/home/hyobin/Documents/vgg-face.pytorch/images/Train/20_Hyovin/00020_030320201123.png")
-    im = cv.resize(im, (224, 224))
-    # change the dimension format from opencv to torch
-    im = torch.Tensor(im).permute(2, 0, 1).view(1, 3, 224, 224).double()
-    
-    model.eval()
-    im -= torch.Tensor(np.array([129.1863, 104.7624, 93.5940])).double().view(1, 3, 1, 1)
-    print(model(im)[0].size())
-    print(model(im)[0].max())
-    preds = F.softmax(model(im)[1], dim=1)
-    values, indices = preds.max(-1)
-    print("values: ", values, "indices: ", indices)
-    '''
+    print("Einzeltest Result:")
+    einzel_test("/home/hyobin/Documents/vgg-face.pytorch/images/Test/20_Hyovin/00020_0303202011129.png")
+    print("")
+    result_mat = test()
+    print(result_mat)
+    print(sum(torch.diag(result_mat))/torch.sum(result_mat).double())
+    # tensor(0.9961, dtype=torch.float64)
